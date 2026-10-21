@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="id"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>PetaKu</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#1f7a4d">
+<meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
+<style>
+:root{--sf:#fff;--tx:#1d2420;--mu:#6b756e;--ac:#1f7a4d;--bd:#d9ddd6;--bg:#f1f3ef}
+@media(prefers-color-scheme:dark){:root{--sf:#1c231e;--tx:#e8ede9;--mu:#98a39b;--ac:#3fc17f;--bd:#2d3830;--bg:#141915}}
+*{box-sizing:border-box}html,body{height:100%;margin:0;overflow:hidden}
+body{font:14px system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--tx);background:var(--bg)}
+#map{position:absolute;inset:0}
+#bar{position:absolute;z-index:1100;left:8px;top:calc(8px + env(safe-area-inset-top,0px));background:var(--sf);color:var(--tx);border:1px solid var(--bd);border-radius:8px;padding:4px 8px;font-size:12px;max-width:62%}
+#tb{position:absolute;z-index:1100;left:0;right:0;bottom:0;display:flex;gap:6px;justify-content:center;padding:8px 8px calc(8px + env(safe-area-inset-bottom,0px));background:linear-gradient(transparent,#0004)}
+button{font:inherit;background:var(--sf);color:var(--tx);border:1px solid var(--bd);border-radius:10px;padding:9px 11px;cursor:pointer}
+button.on{background:var(--ac);color:#fff;border-color:var(--ac)}
+#tb button{flex:1;max-width:76px;padding:9px 2px;font-size:12px}#tb b{display:block;font-size:18px;font-weight:400}
+#pn{position:absolute;z-index:1200;left:0;right:0;bottom:0;max-height:62%;display:none;flex-direction:column;background:var(--sf);border-radius:14px 14px 0 0;box-shadow:0 -4px 18px #0004;padding-bottom:env(safe-area-inset-bottom,0px)}
+#pn.s{display:flex}.tabs{display:flex;gap:4px;padding:8px;border-bottom:1px solid var(--bd)}.tabs button{flex:1;padding:7px 2px}
+#pb{overflow:auto;padding:10px}
+.row{display:flex;gap:6px;align-items:center;padding:6px 0;border-bottom:1px solid var(--bd)}.row span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+small{color:var(--mu)}input,select{background:var(--bg);color:var(--tx);border:1px solid var(--bd);border-radius:8px;padding:8px;font:inherit;width:100%}
+h4{margin:12px 0 6px}#toast{position:absolute;z-index:1300;left:50%;top:calc(52px + env(safe-area-inset-top,0px));transform:translateX(-50%);background:#000c;color:#fff;padding:7px 12px;border-radius:20px;font-size:13px;display:none;max-width:90%;text-align:center}
+.pin{font-size:24px;line-height:24px;filter:drop-shadow(0 1px 2px #0008)}.me{width:16px;height:16px;border-radius:50%;background:#2b7fff;border:3px solid #fff;box-shadow:0 0 6px #0008}
+.leaflet-top.leaflet-right{margin-top:env(safe-area-inset-top,0px)}.cross{position:absolute;z-index:1000;left:50%;top:50%;width:18px;height:18px;margin:-9px;pointer-events:none;opacity:.7;background:linear-gradient(#000,#000) center/1px 100% no-repeat,linear-gradient(#000,#000) center/100% 1px no-repeat;filter:drop-shadow(0 0 1px #fff)}
+</style></head><body>
+<div id="map"></div><div class="cross"></div><div id="bar">—</div><div id="toast"></div>
+<div id="tb">
+<button id="bg" onclick="gps()"><b>📡</b>GPS</button>
+<button id="bc" onclick="center()"><b>◎</b>Saya</button>
+<button id="br" onclick="recT()"><b>⏺</b>Rekam</button>
+<button id="bm" onclick="setMode('mark')"><b>📌</b>Titik</button>
+<button id="bu" onclick="setMode('meas')"><b>📏</b>Ukur</button>
+<button onclick="po=!po;panel()"><b>☰</b>Menu</button>
+</div>
+<div id="pn"><div class="tabs" id="tabs"></div><div id="pb"></div></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<script>
+const $=s=>document.querySelector(s);
+let D={};try{D=JSON.parse(localStorage.getItem('petaku'))||{}}catch(e){}
+D.marks=D.marks||[];D.tracks=D.tracks||[];D.custom=D.custom||'';
+const save=()=>{try{localStorage.setItem('petaku',JSON.stringify(D))}catch(e){}};
+function toast(t,ms=2500){const e=$('#toast');e.textContent=t;e.style.display='block';clearTimeout(toast.t);toast.t=setTimeout(()=>e.style.display='none',ms)}
+const SRC={
+ 'OpenStreetMap':{u:'https://tile.openstreetmap.org/{z}/{x}/{y}.png',z:19,a:'© OpenStreetMap contributors'},
+ 'Satelit (Esri)':{u:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',z:19,a:'Esri, Maxar, Earthstar Geographics'},
+ 'Topografi':{u:'https://tile.opentopomap.org/{z}/{x}/{y}.png',z:17,a:'© OpenTopoMap, OpenStreetMap'}};
+if(D.custom)SRC['Kustom']={u:D.custom,z:19,a:'Tile kustom'};
+const map=L.map('map',{zoomControl:false,maxZoom:19,tap:false}).setView(D.view||[-2.5,118],D.zoom||5);
+const LY={};for(const k in SRC)LY[k]=L.tileLayer(SRC[k].u,{maxZoom:SRC[k].z,maxNativeZoom:SRC[k].z,attribution:SRC[k].a});
+let base=LY[D.base]?D.base:'OpenStreetMap';LY[base].addTo(map);
+L.control.layers(LY,null,{position:'topright'}).addTo(map);L.control.scale({imperial:false,position:'bottomleft'}).addTo(map);
+map.on('baselayerchange',e=>{base=e.name;D.base=base;save()});
+map.on('moveend',()=>{const c=map.getCenter();D.view=[c.lat,c.lng];D.zoom=map.getZoom();save()});
+function bar(){const c=map.getCenter();$('#bar').textContent=`${c.lat.toFixed(5)}, ${c.lng.toFixed(5)} · z${map.getZoom()}`}
+map.on('move',bar);bar();
+// titik
+const ML=L.layerGroup().addTo(map),TL=L.layerGroup().addTo(map);
+function drawM(){ML.clearLayers();D.marks.forEach((m,i)=>L.marker([m.lat,m.lon],{icon:L.divIcon({html:'📍',className:'pin',iconSize:[24,24],iconAnchor:[12,24]})}).bindPopup(`<b>${esc(m.n)}</b><br>${m.lat.toFixed(5)}, ${m.lon.toFixed(5)}<br><button onclick="renM(${i})">Ubah nama</button> <button onclick="delM(${i})">Hapus</button>`).addTo(ML))}
+function drawT(){TL.clearLayers();D.tracks.forEach(t=>L.polyline(t.pts.map(p=>[p[0],p[1]]),{color:'#2563eb',weight:4,opacity:.8}).addTo(TL))}
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function renM(i){const n=prompt('Nama titik',D.marks[i].n);if(n){D.marks[i].n=n;save();drawM();panel()}}
+function delM(i){D.marks.splice(i,1);save();drawM();map.closePopup();panel()}
+drawM();drawT();
+// mode
+let mode='nav',mp=[];const mline=L.polyline([],{color:'#8a2be2',weight:3,dashArray:'6 6'}).addTo(map),mpts=L.layerGroup().addTo(map);
+function setMode(m){mode=mode===m?'nav':m;mp=[];mline.setLatLngs([]);mpts.clearLayers();$('#bm').classList.toggle('on',mode==='mark');$('#bu').classList.toggle('on',mode==='meas');toast({nav:'Mode jelajah',mark:'Ketuk peta untuk menambah titik',meas:'Ketuk peta untuk mengukur jarak'}[mode])}
+map.on('click',e=>{
+ if(mode==='mark'){const n=prompt('Nama titik','Titik '+(D.marks.length+1));if(n===null)return;D.marks.push({n,lat:e.latlng.lat,lon:e.latlng.lng});save();drawM();panel()}
+ else if(mode==='meas'){mp.push(e.latlng);mline.setLatLngs(mp);L.circleMarker(e.latlng,{radius:4,color:'#8a2be2'}).addTo(mpts);toast('Jarak: '+fm(len(mp)),4000)}});
+map.on('mousemove',e=>{$('#bar').textContent=`${e.latlng.lat.toFixed(5)}, ${e.latlng.lng.toFixed(5)} · z${map.getZoom()}`});
+const len=a=>a.reduce((s,p,i)=>i?s+map.distance(a[i-1],p):0,0),fm=m=>m>=1000?(m/1000).toFixed(2)+' km':m.toFixed(0)+' m';
+// GPS
+let on=false,meM=null,meC=null,rec=null,live=L.polyline([],{color:'#e5532d',weight:5}).addTo(map),first=true,last=null;
+function gps(){if(on){map.stopLocate();on=false;if(meM){map.removeLayer(meM);map.removeLayer(meC);meM=meC=null}$('#bg').classList.remove('on');return toast('GPS dimatikan')}
+ on=true;first=true;$('#bg').classList.add('on');toast('Mencari sinyal GPS…');map.locate({watch:true,enableHighAccuracy:true,maximumAge:2000})}
+map.on('locationerror',e=>{on=false;$('#bg').classList.remove('on');toast('GPS gagal: '+e.message,4000)});
+map.on('locationfound',e=>{last=e;
+ if(!meM){meM=L.marker(e.latlng,{icon:L.divIcon({className:'',html:'<div class="me"></div>',iconSize:[16,16],iconAnchor:[8,8]}),zIndexOffset:900}).addTo(map);meC=L.circle(e.latlng,{radius:e.accuracy,weight:1,color:'#2b7fff'}).addTo(map)}
+ else{meM.setLatLng(e.latlng);meC.setLatLng(e.latlng).setRadius(e.accuracy)}
+ if(first){first=false;map.flyTo(e.latlng,Math.max(map.getZoom(),16))}
+ if(rec&&e.accuracy<=50){const p=rec.pts,l=p[p.length-1];if(!l||map.distance([l[0],l[1]],e.latlng)>=4){p.push([e.latlng.lat,e.latlng.lng,Date.now()]);live.setLatLngs(p.map(q=>[q[0],q[1]]));toast('Merekam · '+fm(len(p.map(q=>L.latLng(q[0],q[1])))),1500)}}});
+function center(){if(last)map.flyTo(last.latlng,Math.max(map.getZoom(),16));else toast('Aktifkan GPS dulu')}
+function recT(){if(!rec){if(!on)gps();rec={n:'Jejak '+new Date().toLocaleString('id-ID'),pts:[]};live.setLatLngs([]);$('#br').classList.add('on');$('#br').lastChild.textContent='Stop';toast('Mulai merekam jejak')}
+ else{if(rec.pts.length>1){D.tracks.push(rec);save();drawT();toast('Jejak disimpan')}else toast('Jejak terlalu pendek, tidak disimpan');rec=null;live.setLatLngs([]);$('#br').classList.remove('on');$('#br').lastChild.textContent='Rekam';panel()}}
+// unduh offline
+const tx=(lo,z)=>Math.floor((lo+180)/360*2**z),ty=(la,z)=>{const r=la*Math.PI/180;return Math.floor((1-Math.log(Math.tan(r)+1/Math.cos(r))/Math.PI)/2*2**z)};
+function tiles(n){const b=map.getBounds(),z0=map.getZoom(),zm=Math.min(z0+n,SRC[base].z),a=[];for(let z=z0;z<=zm;z++){const x1=tx(b.getWest(),z),x2=tx(b.getEast(),z),y1=ty(Math.min(b.getNorth(),85),z),y2=ty(Math.max(b.getSouth(),-85),z);for(let x=x1;x<=x2;x++)for(let y=y1;y<=y2;y++)a.push([z,x,y]);if(a.length>5000)break}return a}
+const turl=(s,z,x,y)=>s.u.replace('{s}','a').replace('{z}',z).replace('{x}',x).replace('{y}',y);
+const CAP=600;let dling=false;
+async function dl(){const n=+$('#lv').value,a=tiles(n);if(a.length>CAP)return toast(`Terlalu banyak (${a.length}). Maks ${CAP} tile. Perkecil area/zoom.`,4000);
+ if(!navigator.serviceWorker||!navigator.serviceWorker.controller)toast('Service worker belum aktif — muat ulang halaman setelah dihosting.',4000);
+ dling=true;let ok=0,err=0,i=0;const s=SRC[base],pr=$('#pg');
+ const w=async()=>{while(dling&&i<a.length){const [z,x,y]=a[i++];try{const r=await fetch(turl(s,z,x,y),{mode:'cors'});r.ok?ok++:err++}catch(e){err++}pr.textContent=`Mengunduh ${ok+err}/${a.length} (gagal ${err})`;await new Promise(r=>setTimeout(r,120))}};
+ await Promise.all([w(),w()]);dling=false;pr.textContent=`Selesai: ${ok} tile tersimpan, ${err} gagal.`}
+// panel
+let po=false,tab='pt',deferred=null;addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferred=e});
+function panel(){const p=$('#pn');p.classList.toggle('s',po);if(!po)return;
+ $('#tabs').innerHTML=[['pt','Titik'],['tr','Jejak'],['of','Offline'],['mo','Lainnya']].map(([k,v])=>`<button class="${tab===k?'on':''}" onclick="tab='${k}';panel()">${v}</button>`).join('')+'<button onclick="po=false;panel()">✕</button>';
+ let h='';
+ if(tab==='pt'){D.marks.forEach((m,i)=>h+=`<div class="row"><span><b>${esc(m.n)}</b><br><small>${m.lat.toFixed(5)}, ${m.lon.toFixed(5)}</small></span><button onclick="map.flyTo([${m.lat},${m.lon}],16);po=false;panel()">Ke</button><button onclick="renM(${i})">✎</button><button onclick="delM(${i})">✕</button></div>`);if(!D.marks.length)h='<small>Belum ada titik. Tekan 📌 Titik lalu ketuk peta.</small>'}
+ if(tab==='tr'){D.tracks.forEach((t,i)=>h+=`<div class="row"><span><b>${esc(t.n)}</b><br><small>${fm(len(t.pts.map(q=>L.latLng(q[0],q[1]))))} · ${t.pts.length} titik</small></span><button onclick="map.fitBounds(L.latLngBounds(D.tracks[${i}].pts.map(q=>[q[0],q[1]])));po=false;panel()">Ke</button><button onclick="D.tracks.splice(${i},1);save();drawT();panel()">✕</button></div>`);if(!D.tracks.length)h='<small>Belum ada jejak. Tekan ⏺ Rekam untuk mulai.</small>'}
+ if(tab==='of'){h=`<small>Mengunduh tile area yang sedang tampil untuk layer: <b>${esc(base)}</b>. Tile yang pernah Anda lihat juga otomatis tersimpan.</small><h4>Tambahan tingkat zoom</h4><select id="lv" onchange="$('#cnt').textContent=tiles(+this.value).length+' tile'"><option value="0">Zoom saat ini saja</option><option value="1">+1 tingkat</option><option value="2" selected>+2 tingkat</option><option value="3">+3 tingkat</option></select><p>Perkiraan: <b id="cnt">${tiles(2).length} tile</b> (maks ${CAP})</p><button class="on" onclick="dl()">⬇ Unduh area ini</button> <button onclick="dling=false">Batal</button><p id="pg"><small></small></p><button onclick="caches.delete('tiles-v1').then(()=>toast('Cache peta dihapus'))">Hapus semua peta offline</button><p><small>Kebijakan OpenStreetMap melarang unduhan massal dari server tile publiknya. Untuk area luas, pakai penyedia tile sendiri (menu Lainnya → URL tile kustom). Pastikan juga mematuhi syarat penggunaan Esri.</small></p>`}
+ if(tab==='mo'){h=`<h4>Ekspor</h4><button onclick="exp('gpx')">GPX</button> <button onclick="exp('json')">GeoJSON</button><h4>URL tile kustom</h4><input id="cu" value="${esc(D.custom)}" placeholder="https://contoh.com/{z}/{x}/{y}.png"><br><br><button onclick="D.custom=$('#cu').value.trim();save();location.reload()">Simpan & muat ulang</button><h4>Penyimpanan</h4><small id="sq">…</small>${deferred?'<br><br><button class="on" onclick="deferred.prompt()">Pasang aplikasi</button>':''}`;
+  navigator.storage&&navigator.storage.estimate&&navigator.storage.estimate().then(s=>{const e=$('#sq');if(e)e.textContent=`Terpakai ${(s.usage/1048576).toFixed(1)} MB dari ${(s.quota/1048576).toFixed(0)} MB`})}
+ $('#pb').innerHTML=h}
+function exp(t){let s,n;if(t==='gpx'){n='petaku.gpx';s='<?xml version="1.0" encoding="UTF-8"?><gpx version="1.1" creator="PetaKu" xmlns="http://www.topografix.com/GPX/1/1">'+D.marks.map(m=>`<wpt lat="${m.lat}" lon="${m.lon}"><name>${esc(m.n)}</name></wpt>`).join('')+D.tracks.map(t=>`<trk><name>${esc(t.n)}</name><trkseg>${t.pts.map(p=>`<trkpt lat="${p[0]}" lon="${p[1]}"><time>${new Date(p[2]).toISOString()}</time></trkpt>`).join('')}</trkseg></trk>`).join('')+'</gpx>'}
+ else{n='petaku.geojson';s=JSON.stringify({type:'FeatureCollection',features:[...D.marks.map(m=>({type:'Feature',properties:{name:m.n},geometry:{type:'Point',coordinates:[m.lon,m.lat]}})),...D.tracks.map(t=>({type:'Feature',properties:{name:t.n},geometry:{type:'LineString',coordinates:t.pts.map(p=>[p[1],p[0]])}}))]})}
+ sv(n,s)}
+async function sv(n,s){const C=window.Capacitor,P=C&&C.Plugins;
+ if(C&&C.isNativePlatform&&C.isNativePlatform()&&P&&P.Filesystem&&P.Share){try{const r=await P.Filesystem.writeFile({path:n,data:s,directory:'CACHE',encoding:'utf8'});await P.Share.share({title:n,url:r.uri});return}catch(e){toast('Gagal membagikan: '+e.message,4000)}}
+ const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([s]));a.download=n;a.click()}
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
+</script></body></html>

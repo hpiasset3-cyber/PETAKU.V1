@@ -1,0 +1,7 @@
+{
+  "appId": "id.petaku.app",
+  "appName": "PetaKu",
+  "webDir": "app",
+  "server": { "androidScheme": "https" },
+  "backgroundColor": "#1f7a4d"
+}
